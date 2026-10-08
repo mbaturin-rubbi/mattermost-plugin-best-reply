@@ -124,6 +124,7 @@ Custom type: `custom_best_reply`. Props:
 |---|---|
 | `best_reply_to` | post id of the quoted message (permalink target) |
 | `best_reply_body` | reply text (used for rendering when the message was transformed) |
+| `best_reply_fallback` | exact generated Markdown quote prefix; only this prefix is stripped after edits |
 | `best_reply_text` | selected fragment, present only for selection-based quotes |
 
 `message` always contains a mobile-safe markdown fallback:
