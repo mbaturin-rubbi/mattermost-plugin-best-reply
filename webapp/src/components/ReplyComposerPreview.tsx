@@ -13,6 +13,7 @@ import {getPostFromState, getUserFromState, getDisplayName} from '../utils/posts
 
 const ReplyComposerPreview: React.FC = () => {
     const store = useStore();
+    const currentChannelId = useSelector((state: GlobalState) => state.entities.channels.currentChannelId);
     const pendingReply = useSelector((state: GlobalState) => {
         // The plugin slice is mounted under `plugins-<plugin-id>` by
         // registerReducer and is not part of GlobalState
@@ -36,6 +37,13 @@ const ReplyComposerPreview: React.FC = () => {
     });
 
     const [portalHost, setPortalHost] = useState<HTMLElement | null>(null);
+    const isOtherChannel = pendingReply?.context === 'channel' && pendingReply.channelId !== currentChannelId;
+
+    useEffect(() => {
+        if (isOtherChannel) {
+            clearPendingReply(store);
+        }
+    }, [isOtherChannel, store]);
 
     useEffect(() => {
         if (!pendingReply) {
@@ -76,7 +84,7 @@ const ReplyComposerPreview: React.FC = () => {
         };
     }, [pendingReply]);
 
-    if (!pendingReply || !replyPost || !portalHost) {
+    if (!pendingReply || !replyPost || !portalHost || isOtherChannel) {
         return null;
     }
 
