@@ -255,6 +255,10 @@ export function getPermalinkUrl(store: Store, postId: string): string | null {
 }
 
 export async function ensurePostLoaded(store: Store, postId: string): Promise<Post | undefined> {
+    if (typeof postId !== 'string' || !(/^[a-z0-9]{26}$/i).test(postId)) {
+        return undefined;
+    }
+
     let post = getPostFromStore(store, postId) || getPostFromState(store.getState(), postId);
     if (post) {
         return post;

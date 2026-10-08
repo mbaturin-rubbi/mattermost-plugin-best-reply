@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-import {describe, expect, it} from 'vitest';
+import {describe, expect, it, vi} from 'vitest';
 
 import type {Post} from '@mattermost/types/posts';
 import type {GlobalState} from '@mattermost/types/store';
 
-import {getClickSurface, getThreadRootId, getThreadsPagePath} from './navigateToPost';
+import {ensurePostLoaded, getClickSurface, getThreadRootId, getThreadsPagePath} from './navigateToPost';
 
 function makePost(overrides: Partial<Post> = {}): Post {
     return {
@@ -42,6 +42,14 @@ describe('getThreadRootId', () => {
     it('falls back to the post id for a thread root', () => {
         expect(getThreadRootId(makePost({id: 'root1'}))).toBe('root1');
     });
+});
+
+it('rejects malformed quote references before reading state or fetching', async () => {
+    const store = {getState: vi.fn()};
+    await Promise.all(['../users/me', '', '__proto__', undefined].map(async (postId) => {
+        expect(await ensurePostLoaded(store as never, postId as string)).toBeUndefined();
+    }));
+    expect(store.getState).not.toHaveBeenCalled();
 });
 
 describe('getClickSurface', () => {
