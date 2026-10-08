@@ -97,3 +97,18 @@ describe('buildQuotedReplyPost', () => {
         expect(result.props.from_webhook).toBe('true');
     });
 });
+
+// Independent audit regression.
+
+it('neutralizes quoted mentions while preserving mentions in the new answer', () => {
+    const quoted = makePost({id: 'quotedid', message: 'Ask @observer and @channel'});
+    const store = makeStore(makeState({quotedid: quoted})) as never;
+    const result = buildQuotedReplyPost(makePost({message: 'My answer to @observer'}), basePending, store);
+    expect(result.message).toContain('Ask @\u200bobserver and @\u200bchannel');
+    expect(result.message).toContain('\n\nMy answer to @observer');
+    expect(result.props[QUOTED_REPLY_BODY_PROP]).toBe('My answer to @observer');
+});
+
+it('neutralizes mentions in the quoted display name too', () => {
+    expect(formatMobileQuoteBlock('@observer', 'hello')).toBe('> **@\u200bobserver**\n> hello');
+});

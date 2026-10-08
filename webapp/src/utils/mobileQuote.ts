@@ -8,8 +8,9 @@ import {MAX_QUOTED_FRAGMENT_LENGTH, QUOTED_REPLY_BODY_PROP, QUOTED_REPLY_POST_TY
 import type {PendingReply} from '../types/store';
 
 export function formatMobileQuoteBlock(authorName: string, quotedMessage: string): string {
-    const author = authorName.trim() || 'Unknown user';
-    const message = truncateMessage(quotedMessage || 'Attachment', MAX_QUOTED_FRAGMENT_LENGTH);
+    // Quoted mentions are context, not new notification recipients.
+    const author = (authorName.trim() || 'Unknown user').replace(/@/g, '@\u200b');
+    const message = truncateMessage(quotedMessage || 'Attachment', MAX_QUOTED_FRAGMENT_LENGTH).replace(/@/g, '@\u200b');
     const messageLines = message.split('\n').map((line) => `> ${line}`);
 
     return [`> **${author}**`, ...messageLines].join('\n');
