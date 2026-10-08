@@ -1,4 +1,4 @@
-import React, {useCallback, useMemo} from 'react';
+import React, {useCallback, useEffect, useMemo} from 'react';
 import {useSelector, useStore} from 'react-redux';
 
 import type {Post} from '@mattermost/types/posts';
@@ -6,7 +6,7 @@ import type {GlobalState} from '@mattermost/types/store';
 
 import ReplyQuote from './ReplyQuote';
 
-import {getPermalinkUrl, navigateToQuotedPost} from '../actions/navigateToPost';
+import {ensurePostLoaded, getPermalinkUrl, navigateToQuotedPost} from '../actions/navigateToPost';
 import {QUOTED_REPLY_PROP} from '../constants';
 import {getPostFromState, getUserFromState, getDisplayName, getQuotedReplyBody, getQuotedFragment} from '../utils/posts';
 
@@ -50,12 +50,14 @@ const QuotedReplyPost: React.FC<Props> = ({post}) => {
         return getUserFromState(state, replyPost.user_id);
     });
 
-    const permalink = useMemo(() => {
-        if (!replyToPostId) {
-            return null;
+    useEffect(() => {
+        if (replyToPostId && !replyPost) {
+            // Keep the stored Markdown readable if the original cannot be fetched.
+            ensurePostLoaded(store, replyToPostId).catch(() => undefined);
         }
-        return getPermalinkUrl(store, replyToPostId);
-    }, [replyToPostId, store]);
+    }, [replyToPostId, replyPost, store]);
+
+    const permalink = replyToPostId && replyPost ? getPermalinkUrl(store, replyToPostId) : null;
 
     const handleQuoteClick = useCallback(() => {
         if (!replyToPostId) {
@@ -65,7 +67,7 @@ const QuotedReplyPost: React.FC<Props> = ({post}) => {
         navigateToQuotedPost(store, replyToPostId, {replyPost: post, sourceElement: containerRef.current});
     }, [replyToPostId, store, post]);
 
-    const replyBody = getQuotedReplyBody(post);
+    const replyBody = replyPost || quotedFragment ? getQuotedReplyBody(post) : post.message;
     const formattedBody = useMemo(() => {
         const formatOptions: PostFormatOptions = {
             postId: post.id,
