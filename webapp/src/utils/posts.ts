@@ -2,7 +2,7 @@ import type {Post} from '@mattermost/types/posts';
 import type {GlobalState} from '@mattermost/types/store';
 import type {UserProfile} from '@mattermost/types/users';
 
-import {MAX_QUOTED_FRAGMENT_LENGTH, QUOTED_REPLY_BODY_PROP, QUOTED_REPLY_POST_TYPE, QUOTED_REPLY_PROP, QUOTED_REPLY_TEXT_PROP} from '../constants';
+import {MAX_QUOTED_FRAGMENT_LENGTH, QUOTED_REPLY_BODY_PROP, QUOTED_REPLY_FALLBACK_PROP, QUOTED_REPLY_POST_TYPE, QUOTED_REPLY_PROP, QUOTED_REPLY_TEXT_PROP} from '../constants';
 
 // The locale the user sees the webapp in; falls back to the server default
 // when the current user is not loaded yet.
@@ -76,7 +76,8 @@ export function truncateMessage(message: string, maxLength = MAX_QUOTED_FRAGMENT
 }
 
 function stripMobileQuotePrefix(message: string): string {
-    if (!message.startsWith('> ')) {
+    // ponytail: legacy posts have no prefix marker; only recognize the generated author header.
+    if (!(/^> \*\*[^\n]+\*\*\n> /).test(message)) {
         return message;
     }
 
@@ -108,9 +109,13 @@ export function getQuotedReplyBody(post: Post): string {
     const message = post.message || '';
 
     if (isQuotedReplyPost(post)) {
-        const stripped = stripMobileQuotePrefix(message);
-        if (stripped) {
-            return stripped;
+        const fallback = post.props?.[QUOTED_REPLY_FALLBACK_PROP];
+        if (message) {
+            if (typeof fallback === 'string') {
+                const prefix = fallback + '\n\n';
+                return fallback && message.startsWith(prefix) ? message.slice(prefix.length) : message;
+            }
+            return stripMobileQuotePrefix(message);
         }
 
         const bodyFromProps = post.props?.[QUOTED_REPLY_BODY_PROP];

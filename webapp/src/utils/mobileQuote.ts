@@ -4,7 +4,7 @@ import type {Post, PostType} from '@mattermost/types/posts';
 
 import {getDisplayName, getPostFromState, getUserFromState, getQuotedPostDisplayMessage, truncateMessage} from './posts';
 
-import {MAX_QUOTED_FRAGMENT_LENGTH, QUOTED_REPLY_BODY_PROP, QUOTED_REPLY_POST_TYPE, QUOTED_REPLY_PROP, QUOTED_REPLY_TEXT_PROP} from '../constants';
+import {MAX_QUOTED_FRAGMENT_LENGTH, QUOTED_REPLY_BODY_PROP, QUOTED_REPLY_FALLBACK_PROP, QUOTED_REPLY_POST_TYPE, QUOTED_REPLY_PROP, QUOTED_REPLY_TEXT_PROP} from '../constants';
 import type {PendingReply} from '../types/store';
 
 export function formatMobileQuoteBlock(authorName: string, quotedMessage: string): string {
@@ -35,6 +35,7 @@ export function buildQuotedReplyPost(post: Post, pendingReply: PendingReply, sto
             ...post.props,
             [QUOTED_REPLY_PROP]: pendingReply.replyToPostId,
             [QUOTED_REPLY_BODY_PROP]: replyBody,
+            [QUOTED_REPLY_FALLBACK_PROP]: mobileQuote,
             ...(pendingReply.selectedText ? {[QUOTED_REPLY_TEXT_PROP]: pendingReply.selectedText} : {}),
         },
     };

@@ -130,3 +130,19 @@ describe('getDisplayName', () => {
         expect(getDisplayName(undefined)).toBe('Unknown user');
     });
 });
+
+// Independent audit regression.
+
+it('does not mistake an edited user blockquote for the generated prefix', () => {
+    const message = '> My own quoted answer\n\nExplanation';
+    const post = makePost({type: QUOTED_REPLY_POST_TYPE as Post['type'], message, props: {[QUOTED_REPLY_BODY_PROP]: 'Old answer'}});
+    expect(getQuotedReplyBody(post)).toBe(message);
+});
+
+it('only strips the recorded prefix from new replies', () => {
+    const prefix = '> **author**\n> Original text';
+    const message = '> **My own heading**\n> My own quote\n\nExplanation';
+    const post = makePost({type: QUOTED_REPLY_POST_TYPE as Post['type'], message, props: {best_reply_fallback: prefix}});
+    expect(getQuotedReplyBody(post)).toBe(message);
+    expect(getQuotedReplyBody({...post, message: prefix + '\n\nUpdated answer'})).toBe('Updated answer');
+});
