@@ -108,6 +108,10 @@ token), then hard-refresh the web client.
   do not edit or commit it. `plugin.json.version` stays the
   release-declared version and must match the `v*` tag at release time.
 
+Channel-context pending replies are cancelled when the selected channel
+changes. Thread-context replies must not be cancelled based on the center
+channel id because the global Threads view can show another channel.
+
 ## Code conventions
 
 - `PluginRegistry` typings live in `webapp/src/types/mattermost-webapp/
