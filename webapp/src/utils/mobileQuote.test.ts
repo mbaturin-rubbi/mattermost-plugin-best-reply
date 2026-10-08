@@ -90,6 +90,14 @@ describe('buildQuotedReplyPost', () => {
         expect(result.props[QUOTED_REPLY_TEXT_PROP]).toBe('фрагмент');
     });
 
+    it('preserves a readable fallback when quoting a file-only message', () => {
+        const quoted = makePost({id: 'quotedid', message: '', file_ids: ['fileid']});
+        const store = makeStore(makeState({quotedid: quoted})) as never;
+        const result = buildQuotedReplyPost(makePost(), basePending, store);
+        expect(result.message).toBe('> **Unknown user**\n> Attachment\n\nтело ответа');
+        expect(result.props[QUOTED_REPLY_PROP]).toBe('quotedid');
+    });
+
     it('preserves existing post props', () => {
         const post = makePost({props: {from_webhook: 'true'}});
         const result = buildQuotedReplyPost(post, basePending, makeStore(makeState()) as never);

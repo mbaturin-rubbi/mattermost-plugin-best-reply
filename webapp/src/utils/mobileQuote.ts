@@ -22,7 +22,7 @@ export function buildQuotedReplyPost(post: Post, pendingReply: PendingReply, sto
     const quotedUser = quotedPost ? getUserFromState(state, quotedPost.user_id) : undefined;
     const quotedText = pendingReply.selectedText ||
         (quotedPost ? getQuotedPostDisplayMessage(quotedPost) : '');
-    const mobileQuote = quotedText ? formatMobileQuoteBlock(getDisplayName(quotedUser), quotedText) : '';
+    const mobileQuote = quotedPost || quotedText ? formatMobileQuoteBlock(getDisplayName(quotedUser), quotedText) : '';
 
     return {
         ...post,
