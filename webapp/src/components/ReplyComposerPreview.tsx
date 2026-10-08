@@ -64,17 +64,26 @@ const ReplyComposerPreview: React.FC = () => {
             }
         };
 
+        // A detached portal must not leave an invisible quote armed for sending.
+        const observer = new MutationObserver(() => {
+            if (hostElement && !hostElement.isConnected) {
+                clearPendingReply(store);
+            }
+        });
+        observer.observe(document.body, {childList: true, subtree: true});
+
         mountPreview();
         const intervalId = window.setInterval(mountPreview, PREVIEW_MOUNT_POLL_INTERVAL_MS);
         const timeoutId = window.setTimeout(() => window.clearInterval(intervalId), PREVIEW_MOUNT_POLL_TIMEOUT_MS);
 
         return () => {
+            observer.disconnect();
             window.clearInterval(intervalId);
             window.clearTimeout(timeoutId);
             hostElement?.remove();
             setPortalHost(null);
         };
-    }, [pendingReply]);
+    }, [pendingReply, store]);
 
     if (!pendingReply || !replyPost || !portalHost) {
         return null;
