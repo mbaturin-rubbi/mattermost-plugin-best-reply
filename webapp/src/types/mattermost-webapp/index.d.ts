@@ -39,4 +39,8 @@ export interface PluginRegistry {
     registerMessageWillBePostedHook(
         hook: (post: Post) => {post: Post} | {error: {message: string}} | Promise<{post: Post} | {error: {message: string}}>,
     ): UniqueIdentifier;
+
+    registerMessageWillBeUpdatedHook(
+        hook: (post: Partial<Post>, oldPost: Post) => {post: Partial<Post>},
+    ): UniqueIdentifier;
 }

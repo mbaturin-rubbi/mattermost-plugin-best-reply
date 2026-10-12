@@ -1,3 +1,5 @@
+import type {QuoteSnapshot} from '../utils/quoteBlocks';
+
 export type ReplyContext = 'channel' | 'thread';
 
 export type PendingReply = {
@@ -7,6 +9,8 @@ export type PendingReply = {
     context: ReplyContext;
     selectedText?: string;
     isOpeningThread?: boolean;
+    quote?: QuoteSnapshot;
+    surface?: 'rhs' | 'global' | 'channel';
 };
 
 export type PluginState = {

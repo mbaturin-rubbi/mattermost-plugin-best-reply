@@ -4,11 +4,13 @@ import {useSelector, useStore} from 'react-redux';
 import type {Post} from '@mattermost/types/posts';
 import type {GlobalState} from '@mattermost/types/store';
 
+import QuoteBlocksPost from './QuoteBlocksPost';
 import ReplyQuote from './ReplyQuote';
 
 import {ensurePostLoaded, getPermalinkUrl, navigateToQuotedPost} from '../actions/navigateToPost';
 import {QUOTED_REPLY_PROP} from '../constants';
 import {getPostFromState, getUserFromState, getDisplayName, getQuotedReplyBody, getQuotedFragment} from '../utils/posts';
+import {QUOTE_BLOCKS_PROP, reconcileEditedPost} from '../utils/quoteBlocks';
 
 type PostFormatOptions = {
     postId?: string;
@@ -30,7 +32,7 @@ type Props = {
     post: Post;
 };
 
-const QuotedReplyPost: React.FC<Props> = ({post}) => {
+const LegacyQuotedReplyPost: React.FC<Props> = ({post}) => {
     const store = useStore();
     const containerRef = React.useRef<HTMLDivElement>(null);
     const replyToPostId = post.props?.[QUOTED_REPLY_PROP] as string | undefined;
@@ -101,6 +103,11 @@ const QuotedReplyPost: React.FC<Props> = ({post}) => {
             </div>
         </div>
     );
+};
+
+const QuotedReplyPost: React.FC<Props> = ({post}) => {
+    const reconciled = {...post, ...reconcileEditedPost({message: post.message}, post)};
+    return reconciled.props && QUOTE_BLOCKS_PROP in reconciled.props ? <QuoteBlocksPost post={reconciled}/> : <LegacyQuotedReplyPost post={post}/>;
 };
 
 export default QuotedReplyPost;

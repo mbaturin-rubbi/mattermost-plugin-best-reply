@@ -17,17 +17,14 @@ Best Reply merges two plugins into one:
 
 ## Features
 
-![Quote a selected fragment](docs/images/quote-fragment.png)
-
-*Select a fragment — the **Quote** popup appears, and the reply quotes only the selected part (composer preview on top).*
-
 - **Reply from the channel** — click **Reply** on any message to open its thread and compose a quoted reply, including the first reply to a message. Messages already in a thread use that existing thread.
 - **Reply in thread** — answer from the thread sidebar, global Threads view, or via **Thread** in the post menu; the reply stays in the source thread.
 - **Quote a fragment** — select part of a message and a small **Quote** popup appears above the selection (or press **Ctrl+Q**); the reply quotes only the selected text inside the source message's thread, including the first reply.
-- **Clickable quotes** — clicking a quote block jumps to the original message (permalink scroll + highlight), including inside an already open thread.
-- **Quote preview** — a compact bar with the author, avatar and up to 5 quoted lines appears above the composer before you send; close it with × to cancel the reply.
+- **Several quotes in one reply** — select another fragment and quote it at the last caret position in the native Markdown composer. Write a comment after each block; existing text is preserved.
+- **Snapshots and source links** — each automatic quote keeps its original text, author and link even when the source is later edited or deleted. Click its author to open the source; unavailable messages produce feedback.
+- **Editable manual quotes** — editing an automatic quote turns it into a manual quote when sending or saving, removing generated attribution. Ordinary `>` blocks remain freely editable. Delete a whole block to remove it; cancel a waiting insertion with ×.
 - **Localized UI** — Reply/Quote labels follow the user's Mattermost language (English / русский / français / Deutsch).
-- **Mobile fallback** — on clients without the plugin the reply is readable as a plain markdown quote (`> **Author** > quoted text`), including the fragment for selection-based replies.
+- **Mobile fallback** — clients without the plugin see the ordered Markdown quote blocks, source links and comments directly in the message body.
 
 Fragments are capped at 500 characters (truncated with an ellipsis). Whole-message quotes are not capped.
 
@@ -102,8 +99,27 @@ agreements and the list of Mattermost gotchas that cost us bugs are in
 - The plugin renames the native "Reply" action to "Thread" by overriding the
   core i18n key `post_info.reply`. If another plugin overrides the same key,
   the last registration wins and one of the labels will be wrong.
-- The pending reply is stored in memory: reloading the page or switching
-  away before sending discards it.
+- Insertion supports the native Markdown textarea. Rich/contenteditable
+  editors are left unchanged with feedback. Quote insertion targets the reply
+  draft, not an inline editor for an existing post; existing quote blocks can
+  still be edited/deleted through the native post editor.
+- Native drafts carry a content fingerprint in each quote link, scoped to the
+  authoring user/channel/thread. Reload, closed/reopened tabs, undo and failed
+  retries do not depend on a separate metadata cache. Copying an automatic
+  block to a different scope makes it manual when sent. Fingerprints track
+  editing integrity; they do not authenticate quoted content.
+- The native `insertText` command preserves browser undo where supported. Its
+  fallback updates the controlled textarea but cannot preserve undo history
+  for the inserted block. Re-test this with the target browser.
+- Native mobile and plugin-disabled clients do not run the update hook. Their
+  edits can leave stale author/link text in server Markdown. The enabled web
+  renderer reconciles stale metadata without restoring deleted/edited text;
+  it never silently changes the server message. Saving a web edit reconciles
+  the stored attribution.
+- Mattermost 11.11 inline Edit bypasses its plugin update hook. A narrow
+  compatibility adapter normalizes the existing post-patch request before it
+  is sent, preserving the native editor's save/error flow. Re-test this path
+  after a Mattermost upgrade.
 - Fragment quoting works on regular message bodies; selecting text inside an
   already quoted reply block is not supported.
 - Quote metadata is attached client-side; there is no server-side validation

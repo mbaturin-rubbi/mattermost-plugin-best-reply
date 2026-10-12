@@ -254,13 +254,13 @@ export function getPermalinkUrl(store: Store, postId: string): string | null {
     return `${getSiteUrl(store).replace(/\/$/, '')}${path}`;
 }
 
-export async function ensurePostLoaded(store: Store, postId: string): Promise<Post | undefined> {
+export async function ensurePostLoaded(store: Store, postId: string, refresh = false): Promise<Post | undefined> {
     if (typeof postId !== 'string' || !(/^[a-z0-9]{26}$/i).test(postId)) {
         return undefined;
     }
 
     let post = getPostFromStore(store, postId) || getPostFromState(store.getState(), postId);
-    if (post) {
+    if (post && !refresh) {
         return post;
     }
 
@@ -295,6 +295,7 @@ declare global {
 }
 
 type NavigateOptions = {
+    verifyOriginal?: boolean;
 
     // The post the clicked quote lives in. On the global threads page it
     // identifies the thread the viewer currently shows (no rhs state there).
@@ -306,8 +307,8 @@ type NavigateOptions = {
 };
 
 export async function navigateToQuotedPost(store: Store, postId: string, options?: NavigateOptions): Promise<boolean> {
-    const post = await ensurePostLoaded(store, postId);
-    if (!post) {
+    const post = await ensurePostLoaded(store, postId, options?.verifyOriginal);
+    if (!post || post.delete_at || post.state === 'DELETED') {
         return false;
     }
 

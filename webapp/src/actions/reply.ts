@@ -2,11 +2,13 @@ import type {Store} from 'redux';
 
 import type {Post} from '@mattermost/types/posts';
 
-import {getOpenThreadRootId, isThreadRhsOpen} from './navigateToPost';
+import {getOpenThreadRootId, getPermalinkUrl, isThreadRhsOpen} from './navigateToPost';
 import {openThreadForPost} from './openThread';
 
-import {COMPOSER_FOCUS_DELAY_MS} from '../constants';
 import {CLEAR_PENDING_REPLY, PLUGIN_STATE_KEY, SET_PENDING_REPLY, type PendingReply, type ReplyContext} from '../types/store';
+import {getDisplayName, getQuotedPostDisplayMessage, getUserFromState} from '../utils/posts';
+import {fingerprintQuote} from '../utils/quoteBlocks';
+import {showQuoteNotice} from '../utils/quoteNotice';
 import {normalizeQuotedFragment} from '../utils/selection';
 
 type MattermostState = Parameters<typeof isThreadRhsOpen>[0];
@@ -26,40 +28,6 @@ function closeRhs(store: Store): void {
         channelId: '',
         timestamp: 0,
     });
-}
-
-function getThreadComposerSelectors(element?: HTMLElement): string[] {
-    if (element?.closest('.ThreadViewer') && !element.closest('.sidebar--right')) {
-        return [
-            '.ThreadViewer .AdvancedTextEditor [contenteditable="true"]',
-            '.ThreadViewer textarea',
-        ];
-    }
-
-    return [
-        '.sidebar--right .AdvancedTextEditor [contenteditable="true"]',
-        '.sidebar--right textarea',
-        '.ThreadViewer .AdvancedTextEditor [contenteditable="true"]',
-        '.ThreadViewer textarea',
-    ];
-}
-
-function focusComposer(context: ReplyContext, element?: HTMLElement): void {
-    const selectors = context === 'thread' ? getThreadComposerSelectors(element) : [
-        '#post-create .AdvancedTextEditor [contenteditable="true"]',
-        '#post_textbox',
-        'textarea#post_textbox',
-    ];
-
-    window.setTimeout(() => {
-        for (const selector of selectors) {
-            const element = document.querySelector(selector) as HTMLElement | null;
-            if (element) {
-                element.focus();
-                break;
-            }
-        }
-    }, COMPOSER_FOCUS_DELAY_MS);
 }
 
 export function setPendingReply(store: Store, pendingReply: PendingReply | null): void {
@@ -113,7 +81,21 @@ export async function startReplyToPost(
         rootId: context === 'thread' ? getRootPostId(post) : '',
         context,
         selectedText: options.selectedText ? normalizeQuotedFragment(options.selectedText) : undefined,
+        surface: isInGlobalThreadViewer(element) ? 'global' : 'rhs',
     };
+
+    const url = getPermalinkUrl(store, post.id);
+    if (!url) {
+        showQuoteNotice('quote_open_failed');
+        return false;
+    }
+    pendingReply.quote = fingerprintQuote({
+        id: Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join(''),
+        sourceId: post.id,
+        author: getDisplayName(getUserFromState(store.getState(), post.user_id)),
+        text: pendingReply.selectedText || getQuotedPostDisplayMessage(post) || 'Attachment',
+        url,
+    }, {userId: store.getState().entities.users.currentUserId, channelId: pendingReply.channelId, rootId: pendingReply.rootId});
 
     const isOpeningThread = context === 'thread' && !isThreadPanelAlreadyOpen(store, post, element);
     const waitingReply = isOpeningThread ? {...pendingReply, isOpeningThread: true} : pendingReply;
@@ -127,8 +109,9 @@ export async function startReplyToPost(
             } catch (error) {
                 if (getPendingReply(store) === waitingReply) {
                     clearPendingReply(store);
+                    showQuoteNotice('quote_open_failed');
                 }
-                throw error;
+                return false;
             }
 
             if (getPendingReply(store) !== waitingReply) {
@@ -136,6 +119,7 @@ export async function startReplyToPost(
             }
             if (!opened) {
                 clearPendingReply(store);
+                showQuoteNotice('quote_open_failed');
                 return false;
             }
 
@@ -143,12 +127,10 @@ export async function startReplyToPost(
             setPendingReply(store, pendingReply);
         }
 
-        focusComposer('thread', element);
         return true;
     }
 
     closeRhs(store);
-    focusComposer('channel');
 
     return true;
 }

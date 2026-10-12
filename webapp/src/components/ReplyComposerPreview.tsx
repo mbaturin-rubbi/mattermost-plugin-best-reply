@@ -1,113 +1,112 @@
 import React, {useEffect, useState} from 'react';
-import {createPortal} from 'react-dom';
 import {useSelector, useStore} from 'react-redux';
 
 import type {GlobalState} from '@mattermost/types/store';
 
-import ReplyQuote from './ReplyQuote';
-
+import {getOpenThreadRootId, isThreadRhsOpen} from '../actions/navigateToPost';
 import {clearPendingReply, getPendingReply} from '../actions/reply';
-import {PREVIEW_MOUNT_POLL_INTERVAL_MS, PREVIEW_MOUNT_POLL_TIMEOUT_MS} from '../constants';
+import {COMPOSER_FOCUS_DELAY_MS, PREVIEW_MOUNT_POLL_INTERVAL_MS, PREVIEW_MOUNT_POLL_TIMEOUT_MS} from '../constants';
+import {useTranslation} from '../i18n';
+import type {MessageId} from '../i18n/messages';
 import {PLUGIN_STATE_KEY, type PendingReply} from '../types/store';
-import {getPostFromState, getUserFromState, getDisplayName} from '../utils/posts';
+import {insertIntoComposer, rememberComposerCaret} from '../utils/composer';
+import {getPostFromState} from '../utils/posts';
+import {QUOTE_NOTICE_EVENT} from '../utils/quoteNotice';
 
 const ReplyComposerPreview: React.FC = () => {
     const store = useStore();
-    const currentChannelId = useSelector((state: GlobalState) => state.entities.channels.currentChannelId);
+    const [error, setError] = useState<MessageId | ''>('');
+    const t = useTranslation();
     const pendingReply = useSelector((state: GlobalState) => {
-        // The plugin slice is mounted under `plugins-<plugin-id>` by
-        // registerReducer and is not part of GlobalState
-        // (docs/api.md#internal-redux-actions).
-        const pluginState = (state as unknown as Record<string, {pendingReply: PendingReply | null} | undefined>)[PLUGIN_STATE_KEY];
-        return pluginState?.pendingReply ?? null;
+        // The plugin slice is outside packaged GlobalState (docs/api.md).
+        return (state as unknown as Record<string, {pendingReply: PendingReply | null}>)[PLUGIN_STATE_KEY]?.pendingReply;
     });
-
-    const replyPost = useSelector((state: GlobalState) => {
-        if (!pendingReply) {
-            return undefined;
-        }
-        return getPostFromState(state, pendingReply.replyToPostId);
-    });
-
-    const replyUser = useSelector((state: GlobalState) => {
-        if (!replyPost) {
-            return undefined;
-        }
-        return getUserFromState(state, replyPost.user_id);
-    });
-
-    const [portalHost, setPortalHost] = useState<HTMLElement | null>(null);
-    const isOtherChannel = pendingReply?.context === 'channel' && pendingReply.channelId !== currentChannelId;
 
     useEffect(() => {
-        if (isOtherChannel) {
-            clearPendingReply(store);
-        }
-    }, [isOtherChannel, store]);
+        const events = ['input', 'select', 'keyup', 'mouseup', 'focusout'];
+        const notice = (event: Event) => setError((event as CustomEvent<MessageId>).detail);
+        window.addEventListener(QUOTE_NOTICE_EVENT, notice);
+        events.forEach((name) => document.addEventListener(name, rememberComposerCaret, true));
+        return () => {
+            window.removeEventListener(QUOTE_NOTICE_EVENT, notice);
+            events.forEach((name) => document.removeEventListener(name, rememberComposerCaret, true));
+        };
+    }, []);
 
     useEffect(() => {
-        if (!pendingReply || pendingReply.isOpeningThread) {
-            setPortalHost(null);
+        if (!pendingReply || pendingReply.isOpeningThread || !pendingReply.quote) {
             return undefined;
         }
-
-        let hostElement: HTMLDivElement | null = null;
-
-        const mountPreview = () => {
-            const mountTarget = (
-                pendingReply.context === 'thread' ? document.querySelector('.ThreadViewer .AdvancedTextEditor__cell') ||
-                    document.querySelector('.sidebar--right .AdvancedTextEditor__cell') : document.querySelector('#post-create .AdvancedTextEditor__cell')
-            ) as HTMLElement | null;
-
-            if (!mountTarget) {
+        setError('');
+        let intervalId: number | undefined;
+        const startedAt = Date.now();
+        const insert = () => {
+            if (getPendingReply(store) !== pendingReply) {
                 return;
             }
-
-            if (!hostElement || hostElement.parentElement !== mountTarget) {
-                hostElement?.remove();
-                hostElement = document.createElement('div');
-                hostElement.className = 'quoted-reply-composer-host';
-                mountTarget.insertBefore(hostElement, mountTarget.firstChild);
-                setPortalHost(hostElement);
+            const state = store.getState() as GlobalState;
+            const globalViewer = [...document.querySelectorAll<HTMLElement>('.ThreadViewer')].find((node) => !node.closest('.sidebar--right'));
+            const surface = pendingReply.surface === 'global' ? globalViewer : document.querySelector(pendingReply.context === 'thread' ? '#sidebar-right' : '#post-create');
+            let wrongDestination = state.entities.channels.currentChannelId !== pendingReply.channelId;
+            if (pendingReply.context === 'thread') {
+                wrongDestination = pendingReply.surface !== 'global' && (!isThreadRhsOpen(state) || getOpenThreadRootId(state) !== pendingReply.rootId);
             }
-        };
+            if (wrongDestination) {
+                clearPendingReply(store);
+                return;
+            }
+            const selector = pendingReply.context === 'thread' ? '[data-testid="comment-create"] .AdvancedTextEditor__cell textarea' : '.AdvancedTextEditor__cell textarea';
+            const textarea = surface?.querySelector<HTMLTextAreaElement>(selector) || surface?.querySelector<HTMLTextAreaElement>('.post-create__container .AdvancedTextEditor__cell #reply_textbox');
+            const viewer = textarea?.closest('.virtual-list__ctr, .post-right__content');
 
-        // A detached portal must not leave an invisible quote armed for sending.
-        const observer = new MutationObserver(() => {
-            if (hostElement && !hostElement.isConnected && getPendingReply(store) === pendingReply) {
+            // The virtual viewer is keyed by thread id; its posts and composer
+            // mount together, whereas SELECT_POST can precede the DOM update.
+            const belongsToThread = pendingReply.context !== 'thread' || Boolean(viewer && [...viewer.querySelectorAll('[id^="rhsPost_"]')].some((node) => {
+                const post = getPostFromState(state, node.id.slice('rhsPost_'.length));
+                return post?.channel_id === pendingReply.channelId && (post.root_id || post.id) === pendingReply.rootId;
+            }));
+            if (textarea && belongsToThread) {
+                if (!insertIntoComposer(textarea, pendingReply.quote!)) {
+                    setError('quote_insert_failed');
+                }
+                clearPendingReply(store);
+                return;
+            }
+            if (surface?.querySelector('[contenteditable="true"]') || Date.now() - startedAt >= PREVIEW_MOUNT_POLL_TIMEOUT_MS) {
+                setError('quote_editor_unavailable');
                 clearPendingReply(store);
             }
-        });
-        observer.observe(document.body, {childList: true, subtree: true});
-
-        mountPreview();
-        const intervalId = window.setInterval(mountPreview, PREVIEW_MOUNT_POLL_INTERVAL_MS);
-        const timeoutId = window.setTimeout(() => window.clearInterval(intervalId), PREVIEW_MOUNT_POLL_TIMEOUT_MS);
-
+        };
+        const timer = window.setTimeout(() => {
+            insert();
+            intervalId = window.setInterval(insert, PREVIEW_MOUNT_POLL_INTERVAL_MS);
+        }, COMPOSER_FOCUS_DELAY_MS);
         return () => {
-            observer.disconnect();
+            window.clearTimeout(timer);
             window.clearInterval(intervalId);
-            window.clearTimeout(timeoutId);
-            hostElement?.remove();
-            setPortalHost(null);
         };
     }, [pendingReply, store]);
 
-    if (!pendingReply || pendingReply.isOpeningThread || !replyPost || !portalHost || isOtherChannel) {
+    if (!error && !pendingReply) {
         return null;
     }
-
-    return createPortal(
-        <div className='quoted-reply-composer-preview'>
-            <ReplyQuote
-                post={replyPost}
-                username={getDisplayName(replyUser)}
-                user={replyUser}
-                onClose={() => clearPendingReply(store)}
-                quoteText={pendingReply.selectedText}
-            />
-        </div>,
-        portalHost,
+    return (
+        <div
+            className='best-reply-notice'
+            role='status'
+        >
+            {t(error || 'quote_loading')}
+            <button
+                type='button'
+                aria-label={t(error ? 'quote_dismiss' : 'quote_cancel')}
+                onClick={() => {
+                    setError('');
+                    clearPendingReply(store);
+                }}
+            >
+                {'×'}
+            </button>
+        </div>
     );
 };
 

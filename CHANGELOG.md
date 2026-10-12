@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Compose several quote snapshots and comments in one native Markdown reply,
+  inserting each fragment at the remembered caret without replacing draft text.
+- Keep an author and source link for each automatic quote. Source edits or
+  deletion do not change saved snapshots; unavailable originals show feedback.
+
+### Fixed
+
+- Convert edited automatic quotes to manual Markdown on send/save, removing
+  generated attribution while preserving user text and freely editable manual
+  quotes. Reconcile stale metadata when displaying mobile/plugin-disabled edits.
+- Track draft quote integrity across reload, reopened tabs and failed sends
+  without a sidecar cache; isolate fingerprints by user/channel/thread.
+- Persist manual conversion through Mattermost 11.11's native inline Edit
+  path, which bypasses the plugin update hook.
+- Avoid old-thread or inline-edit composers during insertion, with a verified
+  DOM fallback for Mattermost 9.
+- Find the real RHS container even when Mattermost's width holder appears first.
+
 ### Changed
 
 - Quote and Ctrl+Q now compose selected fragments inside the source message's

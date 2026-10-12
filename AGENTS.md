@@ -6,12 +6,11 @@ the same commit.
 
 ## Layout
 
-- `webapp/src/index.tsx` — plugin entry: registers every extension point, owns
-  the `messageWillBePosted` hook that converts the next matching post into a
-  quoted reply.
+- `webapp/src/index.tsx` — plugin entry: registers extension points and the
+  create/update hooks that reconcile quote snapshots against actual Markdown.
 - `webapp/src/actions/` — reply/thread/navigation flows (all client-side).
 - `webapp/src/components/` — Reply button, selection popup, quote blocks,
-  composer preview, ErrorBoundary.
+  native composer insertion, ErrorBoundary.
 - `webapp/src/utils/` — pure helpers (selection, posts, mobile fallback).
 - `docs/api.md` — verified semantics of the Mattermost internals we depend on.
   Read it before touching DOM selection, Redux dispatches, or the composer.
@@ -69,16 +68,18 @@ token), then hard-refresh the web client.
 3. **macOS tar writes pax archives that Mattermost's extractor rejects.**
    The Makefile bundles with `COPYFILE_DISABLE=1 tar --format=ustar`.
    Do not "simplify" that line.
-4. **The registry `messageWillBePosted` hook owns single-use pending replies.**
-   Any post that does not match the pending reply (wrong channel, wrong
-   thread, channel context but `root_id` set) must pass through untouched,
-   and the pending reply is only cleared on a match — otherwise the next
-   unrelated message eats the quote.
+4. **Pending replies only request insertion; they never inject text at send.**
+   The post hook verifies a self-contained fingerprint for the exact
+   user/channel/root and reconciles only blocks already in the message.
+   Native draft text carries the fingerprint across tabs, undo and retries;
+   do not introduce a separate draft metadata cache.
 5. **`data-testid="post-message-text"` looks like `post-message-<id>`.**
    All post-id pattern captures are validated with `/^[a-z0-9]{26}$/i`.
-6. **Composer focus uses a 250 ms timeout** because the RHS thread panel is
-   not mounted synchronously after `SELECT_POST`. Resist "fixing" the
-   timeout without a replacement mechanism.
+6. **A 250 ms delay does not prove composer ownership.** Insertion must find
+   `[data-testid="comment-create"]` inside the keyed `.virtual-list__ctr`
+   whose rendered `rhsPost_*` posts belong to the target channel/root.
+   v9 uses `.post-create__container #reply_textbox` inside `.post-right__content`.
+   Never select the first textarea: it may be an unrelated inline edit.
 7. **`window.PostUtils` / internal Redux actions (`SELECT_POST`,
    `UPDATE_RHS_STATE`, `RECEIVED_POSTS_IN_THREAD`) are undocumented.** Wrap
    new uses in the same defensive style as the existing code and record them
@@ -86,12 +87,17 @@ token), then hard-refresh the web client.
 8. **Every registered component is wrapped in ErrorBoundary** so a plugin
    render crash degrades to nothing instead of taking down the channel.
 
-9. **Removing a composer cancels its pending quote.** The preview observes
-   DOM removal while a quote is active; do not leave a detached portal with
-   an armed message hook after the initial mounting poll has stopped.
-   A quote waiting for a different thread must not mount in the old editor
-   or transform outgoing posts. Arm it only after that thread opens, and
-   ignore stale completions/removal callbacks for a replaced pending reply.
+9. **A waiting insertion is cancelled on destination mismatch or timeout.**
+   Ignore stale completions for a replaced/cancelled request. Once inserted,
+   text belongs to the native draft; navigation never removes or reinserts it.
+   Unsupported rich editors receive feedback and no DOM mutation.
+10. **Updates receive `(newPost: Partial<Post>, oldPost: Post)`.** Read old
+    props as well as the patch. Reconcile again during rendering because
+    native/mobile clients can edit the body without updating plugin props.
+    MM 11.11 inline Edit bypasses that hook: `nativePostEdits.ts` normalizes
+    only its exact same-origin SiteURL post-patch request before the one host
+    fetch call. Restore/pass through on unload; never issue a second repair
+    request or mutate server posts while rendering.
 
 ## User decisions that must not be violated
 
@@ -136,10 +142,14 @@ channel id because the global Threads view can show another channel.
 - Magic numbers (timeouts, page sizes, popup geometry) are named constants
   in `webapp/src/constants.ts` with a one-line "why".
 
-New quoted posts record their exact Markdown prefix in `best_reply_fallback`.
-After editing, strip only that unchanged prefix. Legacy posts have no marker,
-so they retain the generated-author-header compatibility check; never treat
-an arbitrary leading user blockquote as a generated prefix.
+New posts keep ordered Markdown in `message` and version-2 snapshots in
+`best_reply_quotes`. A generated author link's URL fragment identifies its
+block and carries an FNV-1a content/scope fingerprint (not authentication).
+Edited bodies become manual quotes and lose generated attribution.
+Never reconstruct missing text from props, strip manual/nested/code examples,
+or mutate the server during rendering. Unknown metadata means plain Markdown.
+Legacy single quotes retain `best_reply_fallback`/author-header compatibility;
+never treat an arbitrary leading user blockquote as a generated prefix.
 
 ## Credits
 

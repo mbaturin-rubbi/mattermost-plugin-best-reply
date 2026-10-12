@@ -17,7 +17,8 @@ import {getTranslationsForLocale} from './i18n';
 import manifest from './manifest';
 import reducer from './reducers';
 import type {PluginRegistry} from './types/mattermost-webapp';
-import {buildQuotedReplyPost} from './utils/mobileQuote';
+import {installNativePostEditReconciliation} from './utils/nativePostEdits';
+import {applyQuoteSnapshots, reconcileEditedPost} from './utils/quoteBlocks';
 
 // The registry expects component types, not elements (passing JSX here throws
 // React #130 and unmounts the whole app); every component is additionally
@@ -41,7 +42,11 @@ function wrapRootWithErrorBoundary(Component: React.ComponentType): React.Compon
 }
 
 export default class Plugin {
+    private removeNativeEditReconciliation?: () => void;
+
     public initialize(registry: PluginRegistry, store: Store<GlobalState>): void {
+        this.removeNativeEditReconciliation?.();
+        this.removeNativeEditReconciliation = installNativePostEditReconciliation(store);
         registry.registerReducer(reducer);
         registry.registerTranslations(getTranslationsForLocale);
         registry.registerRootComponent(QuotedReplyStyles);
@@ -66,29 +71,17 @@ export default class Plugin {
 
         registry.registerMessageWillBePostedHook((post) => {
             const pendingReply = getPendingReply(store);
-
-            if (!pendingReply || pendingReply.isOpeningThread) {
-                return {post};
+            if (pendingReply?.channelId === post.channel_id && pendingReply.rootId === (post.root_id || '')) {
+                clearPendingReply(store);
             }
-
-            if (post.channel_id !== pendingReply.channelId) {
-                return {post};
-            }
-
-            if (pendingReply.context === 'channel') {
-                if (post.root_id) {
-                    return {post};
-                }
-            } else if ((post.root_id || '') !== pendingReply.rootId) {
-                return {post};
-            }
-
-            clearPendingReply(store);
-
-            return {
-                post: buildQuotedReplyPost(post, pendingReply, store),
-            };
+            return {post: applyQuoteSnapshots(post, [], {userId: store.getState().entities.users.currentUserId, channelId: post.channel_id, rootId: post.root_id || ''})};
         });
+        registry.registerMessageWillBeUpdatedHook((post, oldPost) => ({post: reconcileEditedPost(post, oldPost)}));
+    }
+
+    public uninitialize(): void {
+        this.removeNativeEditReconciliation?.();
+        this.removeNativeEditReconciliation = undefined;
     }
 }
 

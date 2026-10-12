@@ -38,7 +38,28 @@ Consequences for selection quoting (`webapp/src/utils/selection.ts`):
 |---|---|
 | `registerPostActionComponent` / `registerPostTypeComponent` / `registerRootComponent` | A **component type**, never a JSX element. Passing an element throws React error #130 and unmounts the whole Mattermost app. Guarded by `index.test.ts` (component typeof 'function'). |
 | `registerMessageWillBePostedHook` | Synchronous transformation of the outgoing post. The returned object replaces the post before it is sent. Setting `type` to a custom value makes the server store the post under that type; the webapp renders it via `registerPostTypeComponent`. |
+| `registerMessageWillBeUpdatedHook` | Receives `(newPost: Partial<Post>, oldPost: Post)`, returns `{post: Partial<Post>}`. The patch may have no props; reconcile against old props and return only the patch plus changed message/props. |
 | `registerTranslations` | Key-value map merged into the webapp i18n dictionaries. Best Reply uses it to rename the native Reply action to "Thread" / "Тред" (`post_info.reply`, `post_info.comment_icon.tooltip.reply`). |
+
+### Native inline Edit bypass in v11.11.0
+
+The hook exists but the ordinary inline editor does not invoke it:
+[use_submit.tsx](https://github.com/mattermost/mattermost/blob/v11.11.0/webapp/channels/src/components/advanced_text_editor/use_submit.tsx)
+dispatches [views/posts.editPost](https://github.com/mattermost/mattermost/blob/v11.11.0/webapp/channels/src/actions/views/posts.ts),
+which calls [mattermost-redux editPost](https://github.com/mattermost/mattermost/blob/v11.11.0/webapp/channels/src/packages/mattermost-redux/src/actions/posts.ts).
+That binds [Client4.patchPost](https://github.com/mattermost/mattermost/blob/v11.11.0/webapp/platform/client/src/client4.ts)
+directly to one `fetch` with `PUT <SiteURL>/api/v4/posts/<id>/patch` and a JSON
+string body. Runtime testing confirmed that relying on the hook left changed
+automatic quotes attributed in the persisted server message.
+
+`nativePostEdits.ts` wraps only that same-origin exact SiteURL endpoint,
+matching `id`/`message` JSON and an existing Best Reply post owned by the current
+user. It normalizes message/props before forwarding one original request.
+Other endpoints, methods, users, unknown shapes, Request objects and streams
+pass through untouched. Headers, credentials, abort signal, response and
+errors remain owned by the native call. Disposal restores the previous fetch
+when possible; if a later wrapper captured it, the disposed adapter becomes
+pass-through. No follow-up repair request and no server mutation on read.
 
 ## Internal Redux actions (dispatched by string type)
 
@@ -87,12 +108,44 @@ either; components read it through a narrowed cast typed directly as
 - Center channel composer: `#post-create .AdvancedTextEditor [contenteditable="true"]` / `#post_textbox`.
 - Thread composer (RHS): `.sidebar--right .AdvancedTextEditor [contenteditable="true"]`.
 - Global Threads view: `.ThreadViewer .AdvancedTextEditor [contenteditable="true"]`.
-- The composer preview portal mounts into `.AdvancedTextEditor__cell`
-  (`.ThreadViewer` / `.sidebar--right` for threads, `#post-create` for the
-  center channel).
-- The composer is focused via `setTimeout` after opening a thread
-  (`COMPOSER_FOCUS_DELAY_MS` = 250 ms) — the panel is not mounted
-  synchronously.
+- Multi-quote insertion only writes native textareas, using
+  `[data-testid="comment-create"] .AdvancedTextEditor__cell textarea` for a
+  thread. This excludes native inline Edit controls.
+- Scope RHS lookups to `#sidebar-right`, not the first `.sidebar--right`.
+  Runtime v11.11.0 renders `.sidebar--right--width-holder` before the real
+  sidebar; the holder has no composer and causes insertion to time out.
+- `.virtual-list__ctr` contains both the rendered `rhsPost_*` posts and the
+  thread composer. Its owning virtual viewer is keyed by `selected.id`.
+  Verify visible posts in this same container against the target channel/root
+  before insertion; Redux selection alone can advance ahead of old DOM.
+- Declared minimum v9.0.0 uses `.post-create__container #reply_textbox` inside
+  `.post-right__content`, without the newer data-testid/virtual-list wrapper.
+  Its viewer is still keyed by `selected.id`; the same visible-post ownership
+  check applies. Verified from v9 source:
+  [comment container](https://github.com/mattermost/mattermost/blob/v9.0.0/webapp/channels/src/components/threading/virtualized_thread_viewer/create_comment.tsx),
+  [virtual viewer](https://github.com/mattermost/mattermost/blob/v9.0.0/webapp/channels/src/components/threading/virtualized_thread_viewer/virtualized_thread_viewer.tsx),
+  [editor id](https://github.com/mattermost/mattermost/blob/v9.0.0/webapp/channels/src/components/advanced_text_editor/advanced_text_editor.tsx),
+  [RHS id](https://github.com/mattermost/mattermost/blob/v9.0.0/webapp/channels/src/components/sidebar_right/sidebar_right.tsx).
+  This is source/fixture compatibility evidence, not a v9 runtime test.
+- Caret positions are remembered from native input/select/key/mouse/blur
+  events. Insert at the remembered position without replacing selected text.
+  `document.execCommand('insertText')` uses native input and undo where
+  supported; fallback uses the prototype textarea value setter plus a bubbling
+  `input` event to update React's controlled draft. The fallback cannot retain
+  browser undo for that insertion. Unsupported contenteditable editors are
+  never rewritten.
+- Poll after a 250 ms mount delay, stop after 3 seconds, and cancel stale
+  destination/request identity. The delay is not a readiness guarantee.
+
+The new contracts above were checked against the public v11.11.0 source:
+[hook dispatch](https://github.com/mattermost/mattermost/blob/v11.11.0/webapp/channels/src/actions/hooks.ts),
+[registry](https://github.com/mattermost/mattermost/blob/v11.11.0/webapp/channels/src/plugins/registry.ts),
+[keyed viewer](https://github.com/mattermost/mattermost/blob/v11.11.0/webapp/channels/src/components/threading/thread_viewer/thread_viewer.tsx),
+[virtual viewer](https://github.com/mattermost/mattermost/blob/v11.11.0/webapp/channels/src/components/threading/virtualized_thread_viewer/virtualized_thread_viewer.tsx),
+[comment container](https://github.com/mattermost/mattermost/blob/v11.11.0/webapp/channels/src/components/threading/virtualized_thread_viewer/create_comment.tsx),
+[editor](https://github.com/mattermost/mattermost/blob/v11.11.0/webapp/channels/src/components/advanced_text_editor/advanced_text_editor.tsx).
+Browser undo and controlled-draft behavior require runtime verification; source
+inspection and jsdom do not prove them.
 
 ## Timing constants
 
@@ -117,6 +170,33 @@ These are core webapp keys; if Mattermost renames them, the native action
 label falls back to the original string.
 
 ## Post shape produced by the plugin
+
+New posts use `custom_best_reply`, with `best_reply_quotes: {version: 2,
+quotes: [{id, sourceId, author, text, url, fingerprint}]}`. The message is the authoritative,
+ordered Markdown body. Each automatic block starts with
+`> [**Author**](<permalink>#br-<random id>-<fingerprint>)`, followed by escaped, mention-safe
+`> ` snapshot lines. The URL fragment identifies a block without a technical
+label or tooltip. Comments and manual blocks are ordinary Markdown.
+
+Create/update hooks compare each identified top-level block with its exact
+snapshot. Edited blocks retain user text but lose their generated header and
+metadata; absent blocks are never rebuilt. Fenced/indented code and nested
+quotes are not treated as automatic blocks. Rendering performs the same
+reconciliation for stale props left by mobile/plugin-disabled edits, without
+writing to the server. Unknown/corrupt versioned props show the full Markdown.
+Full Reply to a v2 source flattens its unchanged automatic blocks to their
+snapshot text in place, preserving interleaved comments/manual Markdown and
+avoiding visible block IDs or recursively generated attribution.
+
+The 64-bit FNV-1a fingerprint covers exact generated Markdown and the authoring
+user/channel/root. It is integrity bookkeeping, not authentication. The native
+draft itself carries enough data to reconstruct unchanged snapshots at send;
+changed/missing/tampered fingerprints become manual quotes. There is no
+sidecar cache, eviction or storage quota mechanism. Reopened tabs and failed
+send retries use the same native text. Rendering/editing use the original
+post's author/scope, never the current reader's identity.
+
+### Legacy single quotes
 
 Custom type: `custom_best_reply`. Props:
 

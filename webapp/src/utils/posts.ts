@@ -2,6 +2,8 @@ import type {Post} from '@mattermost/types/posts';
 import type {GlobalState} from '@mattermost/types/store';
 import type {UserProfile} from '@mattermost/types/users';
 
+import {QUOTE_BLOCKS_PROP, postQuoteScope, readQuoteSnapshots, reconcileQuotes} from './quoteBlocks';
+
 import {MAX_QUOTED_FRAGMENT_LENGTH, QUOTED_REPLY_BODY_PROP, QUOTED_REPLY_FALLBACK_PROP, QUOTED_REPLY_POST_TYPE, QUOTED_REPLY_PROP, QUOTED_REPLY_TEXT_PROP} from '../constants';
 
 // The locale the user sees the webapp in; falls back to the server default
@@ -128,6 +130,10 @@ export function getQuotedReplyBody(post: Post): string {
 }
 
 export function getQuotedPostDisplayMessage(post: Post): string {
+    if (post.props && QUOTE_BLOCKS_PROP in post.props) {
+        const snapshots = readQuoteSnapshots(post.props[QUOTE_BLOCKS_PROP]);
+        return snapshots ? reconcileQuotes(post.message || '', snapshots, true, postQuoteScope(post)).message : post.message || '';
+    }
     if (isQuotedReplyPost(post)) {
         return getQuotedReplyBody(post);
     }

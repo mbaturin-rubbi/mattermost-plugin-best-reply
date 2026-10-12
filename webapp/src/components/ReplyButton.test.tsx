@@ -17,6 +17,7 @@ import {getPendingReply} from '../actions/reply';
 import {COMPOSER_FOCUS_DELAY_MS, QUOTED_REPLY_POST_TYPE, THREAD_FETCH_PAGE_SIZE} from '../constants';
 import reducer from '../reducers';
 import {PLUGIN_STATE_KEY, type PluginState} from '../types/store';
+import {QUOTE_BLOCKS_PROP, quoteMarkdown} from '../utils/quoteBlocks';
 
 let plugin: InstanceType<typeof import('../index').default>;
 let root: Root;
@@ -41,17 +42,19 @@ function makeStore(post: Post, selectedPostId = '') {
     const initialState = {
         [PLUGIN_STATE_KEY]: {pendingReply: null},
         entities: {
-            channels: {currentChannelId: post.channel_id},
+            channels: {currentChannelId: post.channel_id, channels: {[post.channel_id]: {team_id: 'team'}}},
+            teams: {currentTeamId: 'team', teams: {team: {name: 'team'}}},
             general: {config: {SiteURL: 'http://localhost', DefaultClientLocale: 'en'}},
             posts: {posts: {[post.id]: post}},
             users: {profiles: {}, currentUserId: 'me'},
         },
         views: {rhs: {selectedPostId, isSidebarOpen: Boolean(selectedPostId)}},
-    } as unknown as GlobalState & {[PLUGIN_STATE_KEY]: PluginState};
+    } as unknown as GlobalState & {[PLUGIN_STATE_KEY]: PluginState; views: {rhs: {selectedPostId?: string; isSidebarOpen: boolean}}};
 
-    return createStore((state: typeof initialState = initialState, action) => ({
+    return createStore((state: typeof initialState = initialState, action: {type: string; postId?: string}) => ({
         ...state,
         [PLUGIN_STATE_KEY]: reducer(state[PLUGIN_STATE_KEY], action),
+        views: action.type === 'SELECT_POST' ? {rhs: {selectedPostId: action.postId, isSidebarOpen: true}} : state.views,
     }));
 }
 
@@ -64,7 +67,12 @@ beforeAll(async () => {
 beforeEach(() => {
     vi.useFakeTimers();
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-    document.body.innerHTML = '<div id="post-create"><div class="AdvancedTextEditor__cell"><textarea id="post_textbox"></textarea></div></div><div class="sidebar--right"><div class="AdvancedTextEditor__cell"><textarea></textarea></div></div>';
+    vi.spyOn(crypto, 'randomUUID').mockImplementation(() => {
+        throw new Error('randomUUID is unavailable on HTTP');
+    });
+    sessionStorage.clear();
+    localStorage.clear();
+    document.body.innerHTML = '<div id="post-create"><div class="AdvancedTextEditor__cell"><textarea id="post_textbox"></textarea></div></div><div id="sidebar-right" class="sidebar--right"><div class="AdvancedTextEditor__cell"><textarea></textarea></div></div>';
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -73,6 +81,7 @@ beforeEach(() => {
 afterEach(() => {
     act(() => root.unmount());
     vi.useRealTimers();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
     document.body.innerHTML = '';
 });
@@ -104,6 +113,7 @@ describe.each(['Reply', 'Quote', 'Ctrl+Q'])('%s thread routing', (action) => {
             registerPostTypeComponent: vi.fn(),
             registerPostDropdownMenuAction: vi.fn(),
             registerMessageWillBePostedHook: vi.fn(),
+            registerMessageWillBeUpdatedHook: vi.fn(),
         };
         plugin.initialize(registry, store);
         const [hook] = registry.registerMessageWillBePostedHook.mock.calls[0] as [(outgoing: Post) => {post: Post}];
@@ -117,6 +127,14 @@ describe.each(['Reply', 'Quote', 'Ctrl+Q'])('%s thread routing', (action) => {
         } else if (surface === 'sidebar--right') {
             document.querySelector('.sidebar--right')!.appendChild(container);
         }
+        const composerSurface = surface === 'ThreadViewer' ? '.ThreadViewer' : '.sidebar--right';
+        const surfaceNode = document.querySelector(composerSurface)!;
+        const cell = surfaceNode.querySelector('.AdvancedTextEditor__cell')!;
+        const viewer = document.createElement('div');
+        viewer.className = 'virtual-list__ctr';
+        viewer.innerHTML = `<div id="rhsPost_${post.id}"></div><div data-testid="comment-create"></div>`;
+        surfaceNode.appendChild(viewer);
+        viewer.querySelector('[data-testid="comment-create"]')!.appendChild(cell);
 
         await act(async () => {
             root.render(
@@ -156,7 +174,7 @@ describe.each(['Reply', 'Quote', 'Ctrl+Q'])('%s thread routing', (action) => {
         const quote = action === 'Reply' ? post.message : 'Original';
 
         const pendingReply = getPendingReply(store);
-        expect(pendingReply).toEqual({
+        expect(pendingReply).toMatchObject({
             context: 'thread',
             channelId: post.channel_id,
             rootId: expectedRootId,
@@ -172,10 +190,11 @@ describe.each(['Reply', 'Quote', 'Ctrl+Q'])('%s thread routing', (action) => {
         }
         expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({type: 'UPDATE_RHS_STATE'}));
 
-        const composerSurface = surface === 'ThreadViewer' ? '.ThreadViewer' : '.sidebar--right';
-        expect(document.querySelector(`${composerSurface} .quoted-reply-quote__message`)?.textContent).toBe(quote);
         act(() => vi.advanceTimersByTime(COMPOSER_FOCUS_DELAY_MS));
-        expect(document.activeElement).toBe(document.querySelector(`${composerSurface} textarea`));
+        const textarea = document.querySelector<HTMLTextAreaElement>(`${composerSurface} textarea`)!;
+        expect(document.activeElement).toBe(textarea);
+        expect(textarea.value).toBe(quoteMarkdown(pendingReply!.quote!) + '\n\n');
+        expect(getPendingReply(store)).toBeNull();
 
         for (const outgoing of [
             makePost({message: 'Channel message'}),
@@ -183,22 +202,19 @@ describe.each(['Reply', 'Quote', 'Ctrl+Q'])('%s thread routing', (action) => {
             makePost({channel_id: 'other-channel', root_id: expectedRootId}),
         ]) {
             expect(hook(outgoing).post).toBe(outgoing);
-            expect(getPendingReply(store)).toEqual(pendingReply);
+            expect(getPendingReply(store)).toBeNull();
         }
 
         let converted: Post;
         act(() => {
-            converted = hook(makePost({id: 'new-reply', root_id: expectedRootId, message: 'My reply'})).post;
+            converted = hook(makePost({id: 'new-reply', root_id: expectedRootId, message: textarea.value + 'My reply'})).post;
         });
         expect(converted!).toMatchObject({
             root_id: expectedRootId,
             type: QUOTED_REPLY_POST_TYPE,
-            message: `> **Unknown user**\n> ${quote}\n\nMy reply`,
-            props: {best_reply_to: post.id, best_reply_body: 'My reply'},
+            message: `${quoteMarkdown(pendingReply!.quote!)}\n\nMy reply`,
+            props: {[QUOTE_BLOCKS_PROP]: {version: 2, quotes: [pendingReply!.quote!]}},
         });
-        if (action !== 'Reply') {
-            expect(converted!.props.best_reply_text).toBe(quote);
-        }
         expect(getPendingReply(store)).toBeNull();
         expect(document.querySelector('.quoted-reply-composer-preview')).toBeNull();
     });

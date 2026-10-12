@@ -11,6 +11,7 @@ import {isReplyablePost} from '../actions/openThread';
 import {startReplyToPost} from '../actions/reply';
 import {SELECTION_POPUP_BOTTOM_MARGIN, SELECTION_POPUP_OFFSET, SELECTION_POPUP_WIDTH} from '../constants';
 import {useTranslation} from '../i18n';
+import {showQuoteNotice} from '../utils/quoteNotice';
 import {getSelectionQuoteContext, type SelectionQuoteContext} from '../utils/selection';
 
 type OverlayState = SelectionQuoteContext & {
@@ -42,8 +43,15 @@ const SelectionQuoteButton: React.FC = () => {
         setOverlay(null);
         window.getSelection()?.removeAllRanges();
 
-        const post = await ensurePostLoaded(store, current.postId);
+        let post;
+        try {
+            post = await ensurePostLoaded(store, current.postId);
+        } catch {
+            showQuoteNotice('quote_open_failed');
+            return;
+        }
         if (!post || !isReplyablePost(post)) {
+            showQuoteNotice('quote_open_failed');
             return;
         }
 

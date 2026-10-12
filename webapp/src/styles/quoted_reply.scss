@@ -282,3 +282,21 @@ body.quoted-reply-plugin-active {
         outline: none;
     }
 }
+
+.best-reply-notice {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    z-index: 1500;
+    max-width: 480px;
+    padding: 12px;
+    border: 1px solid rgba(var(--center-channel-color-rgb), 0.24);
+    border-radius: 6px;
+    background: var(--center-channel-bg);
+    color: var(--center-channel-color);
+    transform: translateX(-50%);
+
+    button {
+        margin-left: 12px;
+    }
+}

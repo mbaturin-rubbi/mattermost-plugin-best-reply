@@ -13,6 +13,7 @@ import ReplyComposerPreview from './ReplyComposerPreview';
 import {clearPendingReply, getPendingReply, setPendingReply, startReplyToPost} from '../actions/reply';
 import reducer from '../reducers';
 import {PLUGIN_STATE_KEY, type PendingReply} from '../types/store';
+import {quoteMarkdown} from '../utils/quoteBlocks';
 
 const source = {id: 'next-root', root_id: '', channel_id: 'channel', user_id: 'author', message: 'New quote', delete_at: 0} as Post;
 const oldReply: PendingReply = {replyToPostId: 'old-root', rootId: 'old-root', channelId: 'channel', context: 'thread'};
@@ -24,7 +25,8 @@ function makeStore(hasOldQuote = false) {
         [PLUGIN_STATE_KEY]: {pendingReply: hasOldQuote ? oldReply : null as PendingReply | null},
         entities: {
             general: {config: {SiteURL: 'http://localhost'}},
-            channels: {currentChannelId: 'channel'},
+            channels: {currentChannelId: 'channel', channels: {channel: {team_id: 'team'}}},
+            teams: {currentTeamId: 'team', teams: {team: {name: 'team'}}},
             posts: {posts: {[source.id]: source, 'old-root': {...source, id: 'old-root', message: 'Old quote'}}},
             users: {profiles: {author: {id: 'author', username: 'author'}}},
         },
@@ -45,14 +47,20 @@ function ThreadComposer() {
     }
     return (
         <div
+            id='sidebar-right'
             className='sidebar--right'
             key={id}
         >
-            <div
-                className='AdvancedTextEditor__cell'
-                data-root={id}
-            >
-                <textarea/>
+            <div className='virtual-list__ctr'>
+                <div id={`rhsPost_${id}`}/>
+                <div data-testid='comment-create'>
+                    <div
+                        className='AdvancedTextEditor__cell'
+                        data-root={id}
+                    >
+                        <textarea/>
+                    </div>
+                </div>
             </div>
         </div>
     );
@@ -68,6 +76,8 @@ function fetchedThread(ok = true): Response {
 
 beforeEach(() => {
     vi.useFakeTimers();
+    sessionStorage.clear();
+    localStorage.clear();
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => {
         finishFetch = resolve;
@@ -99,7 +109,9 @@ describe('switching the quoted thread', () => {
         });
         expect(oldComposer.isConnected).toBe(false);
         expect(getPendingReply(store)).toMatchObject({replyToPostId: source.id, rootId: source.id});
-        expect(document.querySelector('[data-root="next-root"] .quoted-reply-quote__message')?.textContent).toBe('New quote');
+        const quote = getPendingReply(store)!.quote!;
+        await act(async () => vi.advanceTimersByTime(300));
+        expect(document.querySelector<HTMLTextAreaElement>('[data-root="next-root"] textarea')?.value).toBe(quoteMarkdown(quote) + '\n\n');
         await act(async () => store.dispatch({type: 'SELECT_POST', postId: ''}));
         expect(getPendingReply(store)).toBeNull();
     });
@@ -128,9 +140,8 @@ describe('switching the quoted thread', () => {
             opening = startReplyToPost(store, source, {context: 'thread'});
         });
         await act(async () => {
-            const rejected = expect(opening!).rejects.toThrow('API request failed: 500');
             finishFetch(fetchedThread(false));
-            await rejected;
+            expect(await opening!).toBe(false);
         });
         expect(getPendingReply(store)).toBeNull();
         expect(document.querySelector('.quoted-reply-composer-preview')).toBeNull();
@@ -145,9 +156,8 @@ describe('switching the quoted thread', () => {
         });
         await act(async () => setPendingReply(store, oldReply));
         await act(async () => {
-            const result = ok ? expect(opening!).resolves.toBe(false) : expect(opening!).rejects.toThrow('API request failed: 500');
             finishFetch(fetchedThread(ok));
-            await result;
+            expect(await opening!).toBe(false);
         });
         expect(getPendingReply(store)).toBe(oldReply);
     });
